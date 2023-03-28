@@ -31,9 +31,101 @@ function initialize() {
     ScriptApp.deleteTrigger(triggers[i]);
   }
   ScriptApp.newTrigger("submitValuesToSlack")
-    .forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet())
+    .forSpreadsheet(FormApp.getActiveForm().getDestinationId())
     .onFormSubmit()
     .create();
+
+  // ScriptApp.newTrigger('copySpreadSheet').forForm(FormApp.getActiveForm()).onFormSubmit().create();
+  ScriptApp.newTrigger("submitValuesToSlackBlocks")
+    .forForm(FormApp.getActiveForm())
+    .onFormSubmit()
+    .create();
+}
+
+
+function getGridItemLabeledValue(item, response) {
+  var idx = response.findIndex(i => i != null);
+
+  var gridItem = item.asGridItem()
+
+  // edge, sleepsuite, etc
+  var rows = gridItem.getRows();
+  // monthly, annual
+  // var cols = gridItem.getColumns()
+
+  return [rows[idx], response[idx],];
+}
+
+function submitValuesToSlackBlocks(e) {
+  // MARK: START DEBUGGING
+  // var formDebug = FormApp.openById('{formId}');
+  // var formResponses = formDebug.getResponses();
+  // e = { response: formResponses[formResponses.length - 1] };
+  // MARK: END DEBUGGING
+
+  var form = FormApp.getActiveForm();
+  var response = e.response;
+
+  // Create the message to send to Slack
+  var slackMessage = {
+    "blocks": [
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": "*New form submission*"
+        }
+      }
+    ]
+  };
+
+  // Loop through all the form items and add them to the message
+  var items = response.getItemResponses();
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i].getItem();
+    var value = items[i].getResponse();
+
+    if (item.getType() == FormApp.ItemType.GRID) {
+      // TODO: multiple grid items
+      var formItem = form.getItems(FormApp.ItemType.GRID)[0];
+      var labeledValue = getGridItemLabeledValue(formItem, value);
+      value = labeledValue.join(" ");
+    }
+
+    var block = {
+      "type": "section",
+      "fields": [
+        {
+          "type": "mrkdwn",
+          "text": "*" + item.getTitle() + ":*"
+        },
+        {
+          "type": "mrkdwn",
+          "text": value || " "
+        }
+      ]
+    };
+
+    slackMessage.blocks.push(block);
+  }
+
+  slackMessage.blocks.push({
+			"type": "context",
+			"elements": [
+				{
+					"type": "plain_text",
+					"text": "Source: Google Form",
+					"emoji": true
+				}
+			]
+		})
+
+  var options = {
+    'method': 'post',
+    'payload': JSON.stringify(slackMessage)
+  };
+
+  var response = UrlFetchApp.fetch(slackIncomingWebhookUrl, options);
 }
 
 // Running the code in initialize() will cause this function to be triggered this on every Form Submit
@@ -45,13 +137,14 @@ function submitValuesToSlack(e) {
   // }
 
   var attachments = constructAttachments(e.values);
+  // var blocks = constructBlocks(e.values);
 
   var payload = {
     "channel": postChannel,
     "username": postUser,
     "icon_emoji": postIcon,
     "link_names": 1,
-    "attachments": attachments
+    "attachments": attachments,
   };
 
   var options = {
@@ -65,22 +158,22 @@ function submitValuesToSlack(e) {
 // Creates Slack message attachments which contain the data from the Google Form
 // submission, which is passed in as a parameter
 // https://api.slack.com/docs/message-attachments
-var constructAttachments = function(values) {
+var constructAttachments = function (values) {
   var fields = makeFields(values);
 
   var attachments = [{
-    "fallback" : messageFallback,
-    "pretext" : messagePretext,
-    "mrkdwn_in" : ["pretext"],
-    "color" : postColor,
-    "fields" : fields
+    "fallback": messageFallback,
+    "pretext": messagePretext,
+    "mrkdwn_in": ["pretext"],
+    "color": postColor,
+    "fields": fields
   }]
 
   return attachments;
 }
 
 // Creates an array of Slack fields containing the questions and answers
-var makeFields = function(values) {
+var makeFields = function (values) {
   var fields = [];
 
   var columnNames = getColumnNames();
@@ -96,17 +189,17 @@ var makeFields = function(values) {
 
 // Creates a Slack field for your message
 // https://api.slack.com/docs/message-attachments#fields
-var makeField = function(question, answer) {
+var makeField = function (question, answer) {
   var field = {
-    "title" : question,
-    "value" : answer,
-    "short" : false
+    "title": question,
+    "value": answer,
+    "short": false
   };
   return field;
 }
 
 // Extracts the column names from the first row of the spreadsheet
-var getColumnNames = function() {
+var getColumnNames = function () {
   var sheet = SpreadsheetApp.getActiveSheet();
 
   // Get the header row using A1 notation
